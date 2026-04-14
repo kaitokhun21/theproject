@@ -43,6 +43,7 @@ const CFG = {
 };
 
 function ri(a, b) { return Math.floor(Math.random() * (b - a + 1)) + a; }
+function gcd(a, b) { return b === 0 ? a : gcd(b, a % b); }
 
 function buildLetters(len) {
   const pool = [...ALL_LETTERS], out = [];
@@ -83,7 +84,6 @@ function buildMath(level) {
       const d1=[2,3,4,5][ri(0,3)],n1=ri(1,d1-1),d2=[2,3,4,5][ri(0,3)],n2=ri(1,d2-1);
       const subop=Math.random()>0.5?"+":"-";
       const numR=subop==="+"?n1*d2+n2*d1:n1*d2-n2*d1, denR=d1*d2;
-      function gcd(a,b){return b===0?a:gcd(b,a%b);}
       const g=gcd(Math.abs(numR),denR),sNum=numR/g,sDen=denR/g;
       const fStr=sDen===1?`${sNum}`:`${sNum}/${sDen}`;
       const wNum=sNum+(Math.random()>0.5?1:-1);
