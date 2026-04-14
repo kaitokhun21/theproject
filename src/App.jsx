@@ -1,21 +1,12 @@
 import { useState, useEffect, useRef } from "react";
 import { createClient } from "@supabase/supabase-js";
 
-// ── SUPABASE CONFIGURATION ───────────────────────────────────────────────────
-// These credentials connect to your existing database
+// ── SUPABASE CONFIG ──────────────────────────────────────────────────────────
 const SUPABASE_URL = "https://gkhivciloxgldiwbwmoo.supabase.co";
 const SUPABASE_KEY = "sb_publishable_S3GvHVJn_EJq_0zGFqjGsA_c8YYAnaB";
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-// ── SECURITY & VALIDATION ─────────────────────────────────────────────────────
-const validateUsername = (name) => {
-  const trimmed = name.trim();
-  if (trimmed.length < 3 || trimmed.length > 15) return { valid: false, msg: "3-15 characters required" };
-  if (!/^[a-zA-Z0-9_]+$/.test(trimmed)) return { valid: false, msg: "Only letters, numbers, and underscores" };
-  return { valid: true, data: trimmed };
-};
-
-// ── DOPAMINE-TUNED LEVELS ─────────────────────────────────────────────────────
+// ── CONFIG & DOPAMINE LEVELS ────────────────────────────────────────────────
 const ALL_LETTERS = ['A','B','C','D','E','F','G','H','J','K','L','M','N','P','Q','R','S','T','U','V','W','Y','Z'];
 
 const CFG = {
@@ -26,145 +17,131 @@ const CFG = {
   legend: { rounds:8, minSeq:9, maxSeq:12,mathMs:2000, letterMs:900,  pts:50, color:'#ff6b35', label:'LEGEND' },
 };
 
-const LEVEL_ICONS = { easy:'🌱', medium:'⚡', hard:'🔥', boss:'💀', legend:'🗿' };
-
 // ── HELPERS ──────────────────────────────────────────────────────────────────
 function ri(a,b){ return Math.floor(Math.random()*(b-a+1))+a; }
-
 function buildLetters(len){
-  const pool=[...ALL_LETTERS], out=[];
-  for(let i=0; i<len; i++){
-    const x=ri(0,pool.length-1);
-    out.push(pool[x]);
-    pool.splice(x,1);
-  }
-  return out;
+  let p=[...ALL_LETTERS], o=[];
+  for(let i=0;i<len;i++){ let x=ri(0,p.length-1); o.push(p[x]); p.splice(x,1); }
+  return o;
 }
-
-function buildMath(level){
-  const isLegend = level==='legend', isBoss = level==='boss', isHard = level==='hard';
-  
-  function singleOp(useDiv){
-    const ops = useDiv ? ['+','-','*','/'] : ['+','-','*'];
-    const op = ops[ri(0, ops.length-1)];
-    let a, b, real;
-    if(op==='+'){ a=ri(2,20); b=ri(2,20); real=a+b; }
-    else if(op==='-'){ a=ri(10,30); b=ri(1,a); real=a-b; }
-    else if(op==='*'){ a=ri(2,9); b=ri(2,9); real=a*b; }
-    else { b=ri(2,9); real=ri(1,9); a=b*real; }
-    return { expr: `${a} ${op} ${b}`, real };
-  }
-
-  const { expr, real } = singleOp(isHard || isBoss || isLegend);
-  const correct = Math.random() > 0.4;
-  return { expr, shown: correct ? real : real + (Math.random() > 0.5 ? ri(1,3) : -ri(1,3)), correct };
+function buildMath(lvl){
+  let op=['+','-','*'][ri(0,2)];
+  let a,b,real;
+  if(op==='+'){ a=ri(2,20); b=ri(2,20); real=a+b; }
+  else if(op==='-'){ a=ri(10,30); b=ri(1,a); real=a-b; }
+  else { a=ri(2,9); b=ri(2,9); real=a*b; }
+  let corr=Math.random()>0.4;
+  return { expr:`${a}${op}${b}`, shown: corr?real:real+ri(1,3), corr };
 }
 
 // ── UI COMPONENTS ─────────────────────────────────────────────────────────────
-const Card = ({children, style={}}) => (
-  <div style={{background:'#1a1a26', border:'1px solid #2a2a3e', borderRadius:20, padding:'26px 18px', minHeight:260, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:14, marginBottom:12, ...style}}>{children}</div>
-);
+const Card = ({children}) => <div style={{background:'#1a1a26',border:'1px solid #2a2a3e',borderRadius:20,padding:20,display:'flex',flexDirection:'column',alignItems:'center',gap:15}}>{children}</div>;
+const Lbl = ({children}) => <span style={{fontSize:'.6rem',letterSpacing:2,color:'#6b6b8a',textTransform:'uppercase'}}>{children}</span>;
 
-const Lbl = ({children}) => (
-  <span style={{fontSize:'.62rem', letterSpacing:3, textTransform:'uppercase', color:'#6b6b8a', fontFamily:'monospace', textAlign:'center'}}>{children}</span>
-);
+// ── GAME ENGINE ───────────────────────────────────────────────────────────────
+function Game({level, username, onFinish}){
+  const c = CFG[level];
+  const [step,setStep] = useState('memo'); // memo, math, recall
+  const [round,setRound] = useState(1);
+  const [seq,setSeq] = useState([]);
+  const [curIdx,setCurIdx] = useState(0);
+  const [mathData,setMathData] = useState(null);
+  const [correctMaths,setCorrectMaths] = useState(0);
+  const [totalMaths,setTotalMaths] = useState(0);
+  const [userLetters,setUserLetters] = useState([]);
 
-const TFBtn = ({label, c, h, onClick}) => (
-  <button onClick={onClick} style={{flex:1, padding:'13px 0', borderRadius:12, border:`2px solid ${c}`, background:'transparent', color:c, fontSize:'.95rem', fontWeight:700, cursor:'pointer', fontFamily:'inherit'}} onMouseEnter={e=>e.currentTarget.style.background=h} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>{label}</button>
-);
+  useEffect(()=>{ startRound(); },[]);
 
-// ── SCREENS ───────────────────────────────────────────────────────────────────
-function UsernameScreen({onEnter}) {
-  const [name, setName] = useState('');
-  const [err, setErr] = useState('');
+  function startRound(){
+    setSeq(buildLetters(ri(c.minSeq, c.maxSeq)));
+    setCurIdx(0);
+    setStep('memo');
+  }
 
-  const submit = () => {
-    const val = validateUsername(name);
-    if (!val.valid) { setErr(val.msg); return; }
-    onEnter(val.data);
+  useEffect(()=>{
+    if(step==='memo'){
+      let t = setTimeout(()=>{
+        if(curIdx < seq.length-1){ setCurIdx(v=>v+1); }
+        else { setMathData(buildMath(level)); setStep('math'); }
+      }, c.letterMs);
+      return ()=>clearTimeout(t);
+    }
+  },[step,curIdx,seq]);
+
+  function handleMath(ans){
+    setTotalMaths(v=>v+1);
+    if(ans === mathData.corr) setCorrectMaths(v=>v+1);
+    setStep('recall');
+  }
+
+  function handleRecall(letter){
+    let newList = [...userLetters, letter];
+    setUserLetters(newList);
+    if(newList.length === seq.length){
+      if(round < c.rounds){
+        setRound(v=>v+1);
+        setUserLetters([]);
+        startRound();
+      } else {
+        onFinish({ score: Math.round((correctMaths/totalMaths)*100), mathAcc: correctMaths });
+      }
+    }
+  }
+
+  return (
+    <Card>
+      <div style={{color:c.color, fontWeight:800}}>{c.label} - Round {round}/{c.rounds}</div>
+      {step==='memo' && <div style={{fontSize:'4rem', fontWeight:900}}>{seq[curIdx]}</div>}
+      {step==='math' && (
+        <div style={{width:'100%'}}>
+          <div style={{fontSize:'2rem', marginBottom:20}}>{mathData.expr} = {mathData.shown}?</div>
+          <div style={{display:'flex', gap:10}}>
+            <button onClick={()=>handleMath(true)} style={{flex:1, padding:15, background:'#6af7c8', border:'none', borderRadius:10, fontWeight:700}}>YES</button>
+            <button onClick={()=>handleMath(false)} style={{flex:1, padding:15, background:'#f76a8a', border:'none', borderRadius:10, fontWeight:700}}>NO</button>
+          </div>
+        </div>
+      )}
+      {step==='recall' && (
+        <div style={{display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:8}}>
+          {ALL_LETTERS.map(l => (
+            <button key={l} disabled={userLetters.includes(l)} onClick={()=>handleRecall(l)} style={{padding:10, background:userLetters.includes(l)?'#111':'#2a2a3e', color:'#fff', border:'none', borderRadius:8}}>{l}</button>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// ── MAIN APP ──────────────────────────────────────────────────────────────────
+export default function App(){
+  const [screen,setScreen] = useState('username');
+  const [user,setUser] = useState('');
+  const [lvl,setLvl] = useState(null);
+
+  const saveToSupabase = async (res) => {
+    await supabase.from('scores').insert([{ username: user, score: res.score, level: lvl }]);
+    setScreen('menu');
   };
 
-  return (
-    <div style={{display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', minHeight:'80vh', gap:24}}>
-      <div style={{textAlign:'center'}}>
-        <div style={{fontSize:'3.2rem', fontWeight:900, background:'linear-gradient(135deg,#7c6af7,#f76a8a)', WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent'}}>NEUROSPAN</div>
-        <Lbl>Cognitive Memory Lab</Lbl>
-      </div>
-      <Card style={{width:'100%', maxWidth:380, minHeight:'auto'}}>
-        <div style={{fontSize:'1.1rem', fontWeight:700, marginBottom:15}}>Enter Pilot Name</div>
-        <input value={name} onChange={e=>{setName(e.target.value); setErr('');}} onKeyDown={e=>e.key==='Enter'&&submit()}
-          placeholder="BrainMaster_01" style={{width:'100%', padding:'14px', borderRadius:12, border:`1px solid ${err?'#f76a8a':'#2a2a3e'}`, background:'#12121a', color:'#fff', outline:'none', marginBottom:10, boxSizing:'border-box'}} autoFocus/>
-        {err && <div style={{color:'#f76a8a', fontSize:'.75rem', marginBottom:10}}>{err}</div>}
-        <button onClick={submit} style={{width:'100%', padding:14, background:'#7c6af7', color:'#fff', border:'none', borderRadius:12, fontWeight:700, cursor:'pointer'}}>INITIATE →</button>
-      </Card>
-    </div>
-  );
-}
-
-function MenuScreen({username, onStart}) {
-  const [board, setBoard] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const load = async () => {
-      const { data } = await supabase.from("scores").select("*").order("score", {ascending:false}).limit(10);
-      setBoard(data || []);
-      setLoading(false);
-    };
-    load();
-  }, []);
-
-  return (
-    <div>
-      <div style={{textAlign:'center', marginBottom:20}}>
-        <div style={{fontSize:'2.5rem', fontWeight:900, color:'#7c6af7'}}>NEUROSPAN</div>
-        <div style={{color:'#6af7c8', fontSize:'.8rem'}}>Welcome, Agent <b>{username}</b></div>
-      </div>
-      <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:10}}>
-        {['easy','medium','hard','boss'].map(k => (
-          <button key={k} onClick={()=>onStart(k)} style={{background:'#1a1a26', border:`2px solid ${CFG[k].color}`, borderRadius:16, padding:15, cursor:'pointer', color:'#fff', textAlign:'left'}}>
-            <div style={{fontSize:'1.2rem'}}>{LEVEL_ICONS[k]}</div>
-            <div style={{fontWeight:800, color:CFG[k].color}}>{CFG[k].label}</div>
-            <div style={{fontSize:'.65rem', color:'#6b6b8a'}}>{CFG[k].rounds} Rounds</div>
-          </button>
-        ))}
-      </div>
-      <button onClick={()=>onStart('legend')} style={{width:'100%', background:'linear-gradient(135deg,#1a0f00,#2a1500)', border:'2px solid #ff6b35', borderRadius:16, padding:20, cursor:'pointer', color:'#fff', marginBottom:20, display:'flex', alignItems:'center', gap:15}}>
-        <div style={{fontSize:'1.8rem'}}>🗿</div>
-        <div style={{textAlign:'left'}}>
-          <div style={{fontWeight:800, color:'#ff6b35'}}>THE LEGEND</div>
-          <div style={{fontSize:'.65rem', color:'#6b6b8a'}}>Maximum cognitive load test</div>
-        </div>
-      </button>
-      <Card style={{minHeight:'auto', alignItems:'stretch'}}>
-        <Lbl>GLOBAL LEADERBOARD</Lbl>
-        {loading ? <div style={{textAlign:'center', padding:10}}>Loading...</div> : 
-          board.map((row, i) => (
-            <div key={i} style={{display:'flex', justifyContent:'space-between', padding:'8px 0', borderBottom:'1px solid #2a2a3e'}}>
-              <span style={{fontSize:'.85rem'}}>{i+1}. {row.username}</span>
-              <span style={{fontWeight:800, color:'#7c6af7'}}>{row.score}</span>
-            </div>
-          ))
-        }
-      </Card>
-    </div>
-  );
-}
-
-// ── MAIN APP EXPORT ───────────────────────────────────────────────────────────
-export default function App() {
-  const [screen, setScreen] = useState('username');
-  const [username, setUsername] = useState('');
-  const [level, setLevel] = useState(null);
-
-  const handleStart = (lvl) => { setLevel(lvl); setScreen('game'); };
-
-  return (
-    <div style={{background:'#0a0a0f', minHeight:'100vh', padding:'20px 16px', fontFamily:"'Segoe UI', sans-serif", color:'#e8e8f0'}}>
+  return(
+    <div style={{background:'#0a0a0f', minHeight:'100vh', padding:20, color:'#fff', fontFamily:'sans-serif'}}>
       <div style={{maxWidth:500, margin:'0 auto'}}>
-        {screen === 'username' && <UsernameScreen onEnter={(n)=>{setUsername(n); setScreen('menu');}} />}
-        {screen === 'menu' && <MenuScreen username={username} onStart={handleStart} />}
-        {screen === 'game' && <div style={{textAlign:'center'}}>Game logic starting for {level}... (Connect Game Component Here)</div>}
+        {screen==='username' && (
+          <Card>
+            <div style={{fontSize:'2rem', fontWeight:900}}>NEUROSPAN</div>
+            <input placeholder="Username" onChange={e=>setUser(e.target.value)} style={{padding:12, borderRadius:10, border:'1px solid #333', background:'#000', color:'#fff', width:'80%'}} />
+            <button onClick={()=>setScreen('menu')} style={{padding:12, width:'85%', background:'#7c6af7', border:'none', borderRadius:10, color:'#fff', fontWeight:700}}>START</button>
+          </Card>
+        )}
+        {screen==='menu' && (
+          <div style={{display:'grid', gap:10}}>
+            <div style={{textAlign:'center', fontSize:'1.5rem', marginBottom:10}}>Select Training</div>
+            {Object.keys(CFG).map(k => (
+              <button key={k} onClick={()=>{setLvl(k); setScreen('game');}} style={{padding:20, background:'#1a1a26', border:`1px solid ${CFG[k].color}`, borderRadius:15, color:'#fff', fontWeight:700}}>{CFG[k].label.toUpperCase()}</button>
+            ))}
+          </div>
+        )}
+        {screen==='game' && <Game level={lvl} username={user} onFinish={saveToSupabase} />}
       </div>
     </div>
   );
